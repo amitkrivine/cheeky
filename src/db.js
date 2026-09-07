@@ -11,6 +11,7 @@ db.exec(`
     status             TEXT NOT NULL DEFAULT 'active', -- active | expired | removed
     expires_at         TEXT NOT NULL,                  -- ISO date string
     last_invite_link   TEXT,
+    pending_code       TEXT,                           -- one-time code used in the /start deep link
     updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
@@ -38,6 +39,20 @@ function setTelegramUserId(patreonUserId, telegramUserId) {
     .run(telegramUserId, patreonUserId);
 }
 
+function setPendingCode(patreonUserId, code) {
+  db.prepare(`UPDATE members SET pending_code = ? WHERE patreon_user_id = ?`)
+    .run(code, patreonUserId);
+}
+
+function getMemberByPendingCode(code) {
+  return db.prepare(`SELECT * FROM members WHERE pending_code = ?`).get(code);
+}
+
+function clearPendingCode(patreonUserId) {
+  db.prepare(`UPDATE members SET pending_code = NULL WHERE patreon_user_id = ?`)
+    .run(patreonUserId);
+}
+
 function markStatus(patreonUserId, status) {
   db.prepare(`UPDATE members SET status = ?, updated_at = datetime('now') WHERE patreon_user_id = ?`)
     .run(status, patreonUserId);
@@ -58,6 +73,9 @@ module.exports = {
   upsertMember,
   setInviteLink,
   setTelegramUserId,
+  setPendingCode,
+  getMemberByPendingCode,
+  clearPendingCode,
   markStatus,
   getMember,
   getExpiredActiveMembers,

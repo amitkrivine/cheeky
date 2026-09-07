@@ -10,8 +10,9 @@ if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_GROUP_ID) {
   throw new Error('Missing TELEGRAM_BOT_TOKEN or TELEGRAM_GROUP_ID in .env');
 }
 
-// polling: false — we don't need to receive messages, only call the API.
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
+// polling: true — the bot needs to receive incoming /start messages
+// (sent when a patron clicks their personal deep link) in addition to calling the API.
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
 /**
  * Creates a single-use invite link that expires after INVITE_LINK_VALID_MINUTES.
@@ -35,4 +36,46 @@ async function kickMember(telegramUserId) {
   await bot.unbanChatMember(TELEGRAM_GROUP_ID, telegramUserId, { only_if_banned: true });
 }
 
-module.exports = { bot, createOneTimeInviteLink, kickMember };
+/**
+ * Builds the personal deep link a patron clicks to identify themselves to the bot.
+ * Requires the bot's @username (find it via @BotFather, or in .env as TELEGRAM_BOT_USERNAME).
+ */
+function buildDeepLink(code) {
+  const username = process.env.TELEGRAM_BOT_USERNAME;
+  return `https://t.me/${username}?start=${code}`;
+}
+
+/**
+ * Registers the /start handler. Call this once at startup, passing the db
+ * functions needed to look up and update a member by their pending code.
+ */
+function registerStartHandler({ getMemberByPendingCode, setTelegramUserId, clearPendingCode, setInviteLink }) {
+  bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const code = match[1];
+
+    if (!code) {
+      await bot.sendMessage(chatId, 'שלום! זה הבוט לניהול המנוי שלך. הקישור האישי שלך יגיע אליך אחרי שתירשם/תחדש מנוי.');
+      return;
+    }
+
+    const member = getMemberByPendingCode(code);
+    if (!member) {
+      await bot.sendMessage(chatId, 'הקישור הזה כבר לא בתוקף. אם חידשת עכשיו את המנוי, בדוק אם קיבלת קישור חדש יותר.');
+      return;
+    }
+
+    // Link this Telegram user to their Patreon record so we know whom to remove later.
+    setTelegramUserId(member.patreon_user_id, String(msg.from.id));
+    clearPendingCode(member.patreon_user_id);
+
+    const inviteLink = await createOneTimeInviteLink();
+    setInviteLink(member.patreon_user_id, inviteLink);
+
+    await bot.sendMessage(chatId, `תודה! הנה הקישור החד-פעמי שלך לקבוצה:\n${inviteLink}\n\nהקישור תקף לשימוש אחד בלבד ולזמן מוגבל.`);
+  });
+
+  console.log('Telegram /start handler registered.');
+}
+
+module.exports = { bot, createOneTimeInviteLink, kickMember, buildDeepLink, registerStartHandler };

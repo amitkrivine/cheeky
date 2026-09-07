@@ -1,9 +1,15 @@
 require('dotenv').config();
+const crypto = require('crypto');
 const express = require('express');
 const { isValidSignature, parseMemberPayload } = require('./patreon');
-const { upsertMember, setInviteLink, markStatus, getMember } = require('./db');
-const { createOneTimeInviteLink, kickMember } = require('./telegram');
+const {
+  upsertMember, setInviteLink, markStatus, getMember,
+  setPendingCode, getMemberByPendingCode, clearPendingCode, setTelegramUserId,
+} = require('./db');
+const { kickMember, buildDeepLink, registerStartHandler } = require('./telegram');
 const { startExpiryCron } = require('./cronExpire');
+
+registerStartHandler({ getMemberByPendingCode, setTelegramUserId, clearPendingCode, setInviteLink });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -39,12 +45,16 @@ app.post('/webhooks/patreon', async (req, res) => {
       const expiresAt = new Date(Date.now() + MEMBERSHIP_DAYS * 24 * 60 * 60 * 1000).toISOString();
       upsertMember({ patreonUserId, email, expiresAt, status: 'active' });
 
-      const link = await createOneTimeInviteLink();
-      setInviteLink(patreonUserId, link);
+      // Generate a one-time code and turn it into a deep link to the bot.
+      // The patron clicks this, the bot's /start handler identifies them,
+      // links their Telegram account, and sends them the group invite link itself.
+      const code = crypto.randomBytes(16).toString('hex');
+      setPendingCode(patreonUserId, code);
+      const deepLink = buildDeepLink(code);
 
-      // TODO: send `link` to the patron — e.g. email via your mailer,
+      // TODO: send `deepLink` to the patron — e.g. email via your mailer,
       // or a Patreon DM through the API. Logged here as a placeholder.
-      console.log(`New/renewed member ${patreonUserId} (${email}) -> invite link: ${link}`);
+      console.log(`New/renewed member ${patreonUserId} (${email}) -> deep link: ${deepLink}`);
 
     } else if (event === 'members:pledge:delete') {
       const member = getMember(patreonUserId);
