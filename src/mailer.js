@@ -1,12 +1,18 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
-const { RESEND_API_KEY, MAIL_FROM } = process.env;
+const { GMAIL_USER, GMAIL_APP_PASSWORD } = process.env;
 
-if (!RESEND_API_KEY || !MAIL_FROM) {
-  throw new Error('Missing RESEND_API_KEY or MAIL_FROM in .env');
+if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
+  throw new Error('Missing GMAIL_USER or GMAIL_APP_PASSWORD in .env');
 }
 
-const resend = new Resend(RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: GMAIL_USER,
+    pass: GMAIL_APP_PASSWORD, // must be an App Password, not your normal Gmail password
+  },
+});
 
 /**
  * Emails the patron their personal Telegram deep link.
@@ -14,21 +20,17 @@ const resend = new Resend(RESEND_API_KEY);
  * one-time group invite link once it has identified them.
  */
 async function sendDeepLinkEmail(toEmail, deepLink) {
-  const { error } = await resend.emails.send({
-    from: MAIL_FROM,
+  await transporter.sendMail({
+    from: GMAIL_USER,
     to: toEmail,
     subject: 'הקישור שלך לקבוצת הטלגרם',
     html: `
       <p>תודה על התמיכה! 🎉</p>
       <p>לחץ על הכפתור למטה כדי להצטרף לקבוצת הטלגרם - הוא ייפתח שיחה עם הבוט שישלח לך קישור חד-פעמי:</p>
       <p><a href="${deepLink}" style="display:inline-block;padding:10px 20px;background:#0088cc;color:#fff;text-decoration:none;border-radius:6px;">הצטרף לקבוצה</a></p>
-      <p style="color:#888;font-size:12px;">אם הכפתור לא עובד, העתק את הקישור הזה לדפדפן בטלפון: ${deepLink}</p>
+      <p style="color:#888;font-size:12px;">אם הכפתור לא עובד, העתק את הקישור הזה לדפדפן: ${deepLink}</p>
     `,
   });
-
-  if (error) {
-    throw new Error(`Failed to send email via Resend: ${error.message || error}`);
-  }
 }
 
 module.exports = { sendDeepLinkEmail };
