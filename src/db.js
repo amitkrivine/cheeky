@@ -1,7 +1,10 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const db = new Database(path.join(__dirname, '..', 'data.sqlite'));
+// If DB_PATH is set (e.g. pointing into a mounted Volume on Railway), use it —
+// otherwise fall back to a local file for development.
+const dbPath = process.env.DB_PATH || path.join(__dirname, '..', 'data.sqlite');
+const db = new Database(dbPath);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS members (
@@ -12,6 +15,7 @@ db.exec(`
     expires_at         TEXT NOT NULL,                  -- ISO date string
     last_invite_link   TEXT,
     pending_code       TEXT,                           -- one-time code used in the /start deep link
+    last_emailed_at    TEXT,                           -- ISO timestamp of the last link email we sent
     updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
@@ -53,6 +57,26 @@ function clearPendingCode(patreonUserId) {
     .run(patreonUserId);
 }
 
+function markEmailed(patreonUserId) {
+  db.prepare(`UPDATE members SET last_emailed_at = datetime('now') WHERE patreon_user_id = ?`)
+    .run(patreonUserId);
+}
+
+/**
+ * Returns true if we already sent this member a link email within the last
+ * `windowMinutes` — used to avoid double-emailing when Patreon fires two
+ * webhooks (e.g. create + update) for what is really the same signup.
+ */
+function wasRecentlyEmailed(patreonUserId, windowMinutes = 5) {
+  const row = db.prepare(`
+    SELECT 1 FROM members
+    WHERE patreon_user_id = ?
+      AND last_emailed_at IS NOT NULL
+      AND last_emailed_at > datetime('now', '-' || ? || ' minutes')
+  `).get(patreonUserId, windowMinutes);
+  return !!row;
+}
+
 function markStatus(patreonUserId, status) {
   db.prepare(`UPDATE members SET status = ?, updated_at = datetime('now') WHERE patreon_user_id = ?`)
     .run(status, patreonUserId);
@@ -77,6 +101,8 @@ module.exports = {
   getMemberByPendingCode,
   clearPendingCode,
   markStatus,
+  markEmailed,
+  wasRecentlyEmailed,
   getMember,
   getExpiredActiveMembers,
 };

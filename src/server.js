@@ -5,6 +5,7 @@ const { isValidSignature, parseMemberPayload } = require('./patreon');
 const {
   upsertMember, setInviteLink, markStatus, getMember,
   setPendingCode, getMemberByPendingCode, clearPendingCode, setTelegramUserId,
+  markEmailed, wasRecentlyEmailed,
 } = require('./db');
 const { kickMember, buildDeepLink, registerStartHandler } = require('./telegram');
 const { sendDeepLinkEmail } = require('./mailer');
@@ -50,9 +51,14 @@ app.post('/webhooks/patreon', async (req, res) => {
       setPendingCode(patreonUserId, code);
       const deepLink = buildDeepLink(code);
 
-      if (email) {
+      if (wasRecentlyEmailed(patreonUserId)) {
+        // Patreon sometimes fires two webhooks (e.g. create then update) for
+        // what is really the same signup — skip re-sending in that case.
+        console.log(`Skipped duplicate email for ${patreonUserId} (${email}) — already emailed recently`);
+      } else if (email) {
         try {
           await sendDeepLinkEmail(email, deepLink);
+          markEmailed(patreonUserId);
           console.log(`New/renewed member ${patreonUserId} (${email}) -> email sent with deep link`);
         } catch (mailErr) {
           // Don't fail the whole webhook just because the email send failed —
@@ -79,7 +85,6 @@ app.post('/webhooks/patreon', async (req, res) => {
   } catch (err) {
     console.error('Error handling webhook:', err);
     // Return 200 anyway so Patreon doesn't endlessly retry a permanently-failing payload;
-    // switch to 500 while debugging if you want Patreon's automatic retries.
     res.status(200).send('handled with errors');
   }
 });
