@@ -47,26 +47,29 @@ app.post('/webhooks/patreon', async (req, res) => {
       const expiresAt = new Date(Date.now() + MEMBERSHIP_DAYS * 24 * 60 * 60 * 1000).toISOString();
       upsertMember({ patreonUserId, email, expiresAt, status: 'active' });
 
-      const code = crypto.randomBytes(16).toString('hex');
-      setPendingCode(patreonUserId, code);
-      const deepLink = buildDeepLink(code);
-
       if (wasRecentlyEmailed(patreonUserId)) {
         // Patreon sometimes fires two webhooks (e.g. create then update) for
-        // what is really the same signup — skip re-sending in that case.
-        console.log(`Skipped duplicate email for ${patreonUserId} (${email}) — already emailed recently`);
-      } else if (email) {
-        try {
-          await sendDeepLinkEmail(email, deepLink);
-          markEmailed(patreonUserId);
-          console.log(`New/renewed member ${patreonUserId} (${email}) -> email sent with deep link`);
-        } catch (mailErr) {
-          // Don't fail the whole webhook just because the email send failed —
-          // log it clearly so you can resend manually if needed.
-          console.error(`Email send failed for ${patreonUserId} (${email}):`, mailErr.message);
-        }
+        // what is really the same signup — skip entirely so we don't overwrite
+        // the pending_code tied to the link we already emailed.
+        console.log(`Skipped duplicate for ${patreonUserId} (${email}) — already emailed recently`);
       } else {
-        console.warn(`No email on file for member ${patreonUserId}; deep link: ${deepLink}`);
+        const code = crypto.randomBytes(16).toString('hex');
+        setPendingCode(patreonUserId, code);
+        const deepLink = buildDeepLink(code);
+
+        if (email) {
+          try {
+            await sendDeepLinkEmail(email, deepLink);
+            markEmailed(patreonUserId);
+            console.log(`New/renewed member ${patreonUserId} (${email}) -> email sent with deep link`);
+          } catch (mailErr) {
+            // Don't fail the whole webhook just because the email send failed —
+            // log it clearly so you can resend manually if needed.
+            console.error(`Email send failed for ${patreonUserId} (${email}):`, mailErr.message);
+          }
+        } else {
+          console.warn(`No email on file for member ${patreonUserId}; deep link: ${deepLink}`);
+        }
       }
 
     } else if (event === 'members:pledge:delete') {
@@ -85,6 +88,7 @@ app.post('/webhooks/patreon', async (req, res) => {
   } catch (err) {
     console.error('Error handling webhook:', err);
     // Return 200 anyway so Patreon doesn't endlessly retry a permanently-failing payload;
+    // switch to 500 while debugging if you want Patreon's automatic retries.
     res.status(200).send('handled with errors');
   }
 });
